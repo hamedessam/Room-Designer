@@ -550,7 +550,8 @@
   function frameRoom(){
     var b = roomBounds();
     target.set((b.minX+b.maxX)/200, 0, (b.minZ+b.maxZ)/200);
-    radius = Math.max(b.w, b.l, 100)/100*1.2 + 1.5;
+    var maxDim = Math.max(b.w, b.l, 100)/100;
+    radius = Math.max(1.6, maxDim*1.25 + Math.min(0.6, maxDim*0.15));
     updateCamera();
   }
 
@@ -863,6 +864,16 @@
 
   function rebuildAll(){ rebuildRoom(); rebuildItems(); }
 
+  function keepItemsInBounds(){
+    var b = roomBounds();
+    state.items.forEach(function(it){
+      var maxX = Math.max(b.minX, b.maxX - it.w);
+      var maxZ = Math.max(b.minZ, b.maxZ - it.d);
+      it.x = clamp(it.x, b.minX, maxX);
+      it.z = clamp(it.z, b.minZ, maxZ);
+    });
+  }
+
   // ---------- UI ----------
   function el(id){ return document.getElementById(id); }
   function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
@@ -909,7 +920,7 @@
               inp.value = Math.round(edgeLengthCm(i));
               return;
             }
-            rebuildRoom(); renderCornersList(); renderWallsList(); saveStateDebounced();
+            rebuildRoom(); renderCornersList(); renderWallsList(); keepItemsInBounds(); rebuildItems(); renderItemsList(); saveStateDebounced();
           });
         }
       })(idx);
@@ -960,7 +971,12 @@
     reader.readAsText(file);
   }
 
-  function syncRoomHeightAndCorners(){ el('roomH').value = state.room.h; renderCornersList(); renderWallsList(); }
+  function syncRoomHeightAndCorners(){
+    el('roomH').value = state.room.h;
+    renderCornersList(); renderWallsList();
+    keepItemsInBounds(); rebuildItems(); renderItemsList();
+    saveStateDebounced();
+  }
 
   function syncRoomAndMaterials(){
     el('roomH').value = state.room.h;
@@ -1003,7 +1019,7 @@
           return;
         }
         state.room.points[i][f] = newVal;
-        rebuildRoom(); renderWallsList(); saveStateDebounced();
+        rebuildRoom(); renderWallsList(); keepItemsInBounds(); rebuildItems(); renderItemsList(); saveStateDebounced();
       });
     });
     wrap.querySelectorAll('[data-ins]').forEach(function(btn){
@@ -1012,7 +1028,7 @@
         var pts2=state.room.points, p1=pts2[i], p2=pts2[(i+1)%pts2.length];
         pts2.splice(i+1,0,{x:Math.round((p1.x+p2.x)/2), z:Math.round((p1.z+p2.z)/2)});
         openWallIndex=null; selectedWallIndex=null;
-        rebuildRoom(); renderCornersList(); renderWallsList(); saveStateDebounced();
+        rebuildRoom(); renderCornersList(); renderWallsList(); keepItemsInBounds(); rebuildItems(); saveStateDebounced();
       });
     });
     wrap.querySelectorAll('[data-rm]').forEach(function(btn){
@@ -1023,7 +1039,7 @@
         state.room.doors = state.room.doors.filter(function(d){return d.edgeIndex!==i;});
         state.room.windows = state.room.windows.filter(function(wd){return wd.edgeIndex!==i;});
         openWallIndex=null; selectedWallIndex=null;
-        rebuildRoom(); renderCornersList(); renderWallsList(); renderOpeningsList(); saveStateDebounced();
+        rebuildRoom(); renderCornersList(); renderWallsList(); renderOpeningsList(); keepItemsInBounds(); rebuildItems(); saveStateDebounced();
       });
     });
   }
@@ -1148,10 +1164,12 @@
       '</div>'+
       '<div class="field"><label>لون القطعة</label><div class="color-row"><input type="color" data-f="color" value="'+it.color+'"><span class="hex-label">'+it.color+'</span></div></div>'+
       '<div class="field"><label>حدد مكانها بالنسبة لحيطة رقم</label><select data-wf="refWall">'+wallOptions+'</select></div>'+
-      '<div class="grid2">'+
-        '<div class="field"><label>بعدها للجوه من الحيطة دي (سم)</label><input type="number" data-wf="wallV" value="'+Math.round(uv.v)+'"></div>'+
-        '<div class="field"><label>انزلاقها بمحاذاة الحيطة (سم)</label><input type="number" data-wf="wallU" value="'+Math.round(uv.u)+'"></div>'+
-      '</div>'+
+      '<div class="field"><label>بعدها للجوه من الحيطة دي — <span data-wflab="wallV">'+Math.round(uv.v)+'</span> سم</label>'+
+        '<input type="range" data-wf="wallVRange" min="-30" max="'+Math.max(60, Math.round(Math.max(roomBounds().w, roomBounds().l)))+'" value="'+Math.round(uv.v)+'">'+
+        '<input type="number" data-wf="wallV" value="'+Math.round(uv.v)+'" style="margin-top:6px;"></div>'+
+      '<div class="field"><label>انزلاقها بمحاذاة الحيطة — <span data-wflab="wallU">'+Math.round(uv.u)+'</span> سم</label>'+
+        '<input type="range" data-wf="wallURange" min="0" max="'+Math.max(20, Math.round(frame.length))+'" value="'+Math.round(uv.u)+'">'+
+        '<input type="number" data-wf="wallU" value="'+Math.round(uv.u)+'" style="margin-top:6px;"></div>'+
       '<p class="section-note" style="margin-top:-4px;">المقاسين دول بيتحسبوا لنص القطعة، وبيتقاسوا من أول ركن في الحيطة اللي اخترتها.</p>'+
       '<div class="field"><label>ارتفاعها عن الأرض (لو معلقة) — '+(it.yBase||0)+' سم</label><input type="range" data-f="yBase" min="0" max="'+maxY+'" value="'+clamp(it.yBase||0,0,maxY)+'"></div>'+
       '<div class="field"><label>الدوران</label><div class="rot-row">'+
@@ -1177,6 +1195,11 @@
     var wallSelect = body.querySelector('[data-wf="refWall"]');
     var vInput = body.querySelector('[data-wf="wallV"]');
     var uInput = body.querySelector('[data-wf="wallU"]');
+    var vRange = body.querySelector('[data-wf="wallVRange"]');
+    var uRange = body.querySelector('[data-wf="wallURange"]');
+    var vLab = body.querySelector('[data-wflab="wallV"]');
+    var uLab = body.querySelector('[data-wflab="wallU"]');
+
     function applyWallUV(){
       var wi = parseInt(wallSelect.value)||0;
       var frame = getWallFrame(wi);
@@ -1188,19 +1211,29 @@
       it.refWall = wi;
       rebuildItems(); renderItemsList_soft(); saveStateDebounced();
     }
+    function syncVFromRange(){ vInput.value = vRange.value; if(vLab) vLab.textContent = vRange.value; applyWallUV(); }
+    function syncUFromRange(){ uInput.value = uRange.value; if(uLab) uLab.textContent = uRange.value; applyWallUV(); }
+    function syncVFromNumber(){ vRange.value = vInput.value; if(vLab) vLab.textContent = vInput.value; applyWallUV(); }
+    function syncUFromNumber(){ uRange.value = uInput.value; if(uLab) uLab.textContent = uInput.value; applyWallUV(); }
+
     if(wallSelect){
       wallSelect.addEventListener('change', function(){
         it.refWall = parseInt(wallSelect.value)||0;
         var frame = getWallFrame(it.refWall);
         var centerCm = {x: it.x+it.w/2, z: it.z+it.d/2};
         var uv = worldToWallUV(centerCm, frame);
-        vInput.value = Math.round(uv.v);
-        uInput.value = Math.round(uv.u);
+        var newV = Math.round(uv.v), newU = Math.round(uv.u);
+        vInput.value = newV; if(vRange){ vRange.max = Math.max(vRange.max, newV); vRange.value = newV; }
+        uInput.value = newU; if(uRange){ uRange.max = Math.max(Math.round(frame.length), 20); uRange.value = newU; }
+        if(vLab) vLab.textContent = newV;
+        if(uLab) uLab.textContent = newU;
         saveStateDebounced();
       });
     }
-    if(vInput) vInput.addEventListener('change', applyWallUV);
-    if(uInput) uInput.addEventListener('change', applyWallUV);
+    if(vInput) vInput.addEventListener('change', syncVFromNumber);
+    if(uInput) uInput.addEventListener('change', syncUFromNumber);
+    if(vRange) vRange.addEventListener('input', syncVFromRange);
+    if(uRange) uRange.addEventListener('input', syncUFromRange);
 
     body.querySelectorAll('[data-rot]').forEach(function(btn){
       btn.addEventListener('click', function(){
@@ -1273,7 +1306,9 @@
       state.room.points = defaultRectPoints(w,l);
       state.room.doors = []; state.room.windows = [];
       openWallIndex=null; selectedWallIndex=null;
-      rebuildRoom(); renderCornersList(); renderWallsList(); renderOpeningsList(); frameRoom(); saveStateDebounced();
+      rebuildRoom(); renderCornersList(); renderWallsList(); renderOpeningsList();
+      keepItemsInBounds(); rebuildItems(); renderItemsList();
+      frameRoom(); saveStateDebounced();
     });
 
     el('addDoorBtn').addEventListener('click', function(){ startPlacement('door'); });
