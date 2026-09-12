@@ -130,8 +130,23 @@
     <div class="panel-scroll">
 
       <div class="section">
-        <div class="section-title">شكل الحيطان <small>أركان الأوضة بالسم</small></div>
-        <p class="section-note">اسحب النقط الدائرية 🟠 في العرض لتغيير شكل الحيطة (أي بروز أو نتوء)، أو ظبط الأرقام هنا. "+" بين أي ركنين بيضيف نقطة تقدر تسحبها.</p>
+        <div class="section-title">☁️ نسخة احتياطية</div>
+        <p class="section-note">التصميم بيتحفظ في المتصفح تلقائي، لكن لو عملت مسح لبيانات المتصفح (Clear cache / site data) ممكن يضيع. نزّل نسخة JSON بين كل شوية واحتفظ بيها في جوجل درايف أو أي مكان آمن، وارفعها تاني وقت ما تحتاج.</p>
+        <div class="btn-row">
+          <button type="button" class="btn-secondary" id="exportBtn">⬇️ نزّل نسخة</button>
+          <button type="button" class="btn-secondary" id="importBtn">⬆️ ارفع نسخة</button>
+        </div>
+        <input type="file" id="importFile" accept="application/json" style="display:none;">
+      </div>
+
+      <div class="section">
+        <div class="section-title">الحيطان <small>دوس على أي حيطة لتحددها وتغيّر طولها</small></div>
+        <div id="wallsList"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">تعديل شكل الحيطة (متقدم) <small>لعمل نتوء أو بروز</small></div>
+        <p class="section-note">استخدم قايمة "الحيطان" فوق عشان تغيّر طول أي حيطة عادي. القسم ده تستخدمه بس لما تحب تعمل نتوء أو بروز في شكل الأوضة، عن طريق سحب ركن لمكان تاني — كل ركن ليه موضعه بإحداثيين: X (يمين/شمال) و Z (قدام/ورا)، بيتقاسوا من الركن 🔵 الأول.</p>
         <div class="field"><label>ارتفاع الأوضة (سم)</label><input type="number" id="roomH" min="180" max="500" step="1"></div>
         <div id="cornersList"></div>
         <button type="button" class="btn-secondary" id="rectToggle">🔄 ابدأ من مستطيل بسيط</button>
@@ -230,6 +245,8 @@
   var state = null;
   var selectedId = null;
   var openId = null;
+  var openWallIndex = null;
+  var selectedWallIndex = null;
   var placementMode = null; // null | 'door' | 'window'
   var STORAGE_KEY = 'room-design-v3';
 
@@ -294,6 +311,38 @@
   function edgeLengthCm(i){
     var pts = state.room.points, p1=pts[i], p2=pts[(i+1)%pts.length];
     return Math.sqrt(Math.pow(p2.x-p1.x,2)+Math.pow(p2.z-p1.z,2));
+  }
+
+  function cross2(o,a,b){ return (a.x-o.x)*(b.z-o.z)-(a.z-o.z)*(b.x-o.x); }
+  function segsIntersect(p1,p2,p3,p4){
+    var d1=cross2(p3,p4,p1), d2=cross2(p3,p4,p2), d3=cross2(p1,p2,p3), d4=cross2(p1,p2,p4);
+    return ((d1>0&&d2<0)||(d1<0&&d2>0)) && ((d3>0&&d4<0)||(d3<0&&d4>0));
+  }
+  function isSimplePolygon(pts){
+    var n = pts.length;
+    for(var i=0;i<n;i++){
+      var a1=pts[i], a2=pts[(i+1)%n];
+      for(var j=i+1;j<n;j++){
+        if(j===i || (j+1)%n===i || (i+1)%n===j) continue;
+        if(segsIntersect(a1,a2,pts[j],pts[(j+1)%n])) return false;
+      }
+    }
+    return true;
+  }
+
+  function setWallLength(edgeIndex, newLengthCm){
+    newLengthCm = Math.max(20, Math.min(3000, newLengthCm));
+    var pts = state.room.points, n = pts.length;
+    var p1 = pts[edgeIndex], p2idx = (edgeIndex+1)%n, p2 = pts[p2idx];
+    var dx = p2.x-p1.x, dz = p2.z-p1.z;
+    var oldLen = Math.sqrt(dx*dx+dz*dz);
+    if(oldLen < 0.01) return false;
+    var ux = dx/oldLen, uz = dz/oldLen;
+    var newP2 = {x: Math.round(p1.x + ux*newLengthCm), z: Math.round(p1.z + uz*newLengthCm)};
+    var candidate = pts.map(function(pt,idx){ return idx===p2idx ? newP2 : pt; });
+    if(!isSimplePolygon(candidate)) return false;
+    pts[p2idx] = newP2;
+    return true;
   }
 
   // ---------- Three.js scene ----------
@@ -410,9 +459,14 @@
         if(p){
           var xcm = Math.max(-800, Math.min(2500, Math.round(p.x*100)));
           var zcm = Math.max(-800, Math.min(2500, Math.round(p.z*100)));
-          state.room.points[dragPointIndex].x = xcm;
-          state.room.points[dragPointIndex].z = zcm;
-          rebuildRoom(); renderCornersListSoft(); saveStateDebounced();
+          var candidate = state.room.points.map(function(pt,idx){
+            return idx===dragPointIndex ? {x:xcm,z:zcm} : pt;
+          });
+          if(isSimplePolygon(candidate)){
+            state.room.points[dragPointIndex].x = xcm;
+            state.room.points[dragPointIndex].z = zcm;
+            rebuildRoom(); renderCornersListSoft(); renderWallsListSoft(); saveStateDebounced();
+          }
         }
         return;
       }
@@ -541,6 +595,7 @@
     roomGroup.add(new THREE.Mesh(floorGeo, floorMat));
 
     var wallMat = new THREE.MeshStandardMaterial({color:new THREE.Color(state.room.wallColor), roughness:0.95, side:THREE.DoubleSide});
+    var wallMatHi = new THREE.MeshStandardMaterial({color:0xA8562E, roughness:0.85, side:THREE.DoubleSide, transparent:true, opacity:0.65});
     var doorLeafMat = new THREE.MeshStandardMaterial({color:0x6B4A34, roughness:0.55});
     var handleMat = new THREE.MeshStandardMaterial({color:0x33302B, roughness:0.35, metalness:0.55});
     var glassMat = new THREE.MeshStandardMaterial({color:0xAED8E6, transparent:true, opacity:0.42, roughness:0.08, side:THREE.DoubleSide});
@@ -578,7 +633,7 @@
         if(u1-u0 < 0.001 || v1-v0 < 0.001) return;
         var c = toWorld((u0+u1)/2, (v0+v1)/2);
         var geo = new THREE.PlaneGeometry(u1-u0, v1-v0);
-        var mesh = new THREE.Mesh(geo, wallMat);
+        var mesh = new THREE.Mesh(geo, i===selectedWallIndex ? wallMatHi : wallMat);
         mesh.rotation.y = angle;
         mesh.position.set(c.x, c.y, c.z);
         mesh.userData = {isWall:true, edgeIndex:i, p1x:p1x,p1z:p1z,p2x:p2x,p2z:p2z};
@@ -639,7 +694,7 @@
 
     var handleGeo = new THREE.CylinderGeometry(0.09,0.09,0.03,20);
     pts.forEach(function(p,i){
-      var handle = new THREE.Mesh(handleGeo, new THREE.MeshBasicMaterial({color:0xA8562E}));
+      var handle = new THREE.Mesh(handleGeo, new THREE.MeshBasicMaterial({color: i===0 ? 0x2E5C8A : 0xA8562E}));
       handle.position.set(p.x/100, 0.02, p.z/100);
       handle.userData.pointIndex = i;
       handlesGroup.add(handle);
@@ -773,7 +828,99 @@
   function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
-  function syncRoomHeightAndCorners(){ el('roomH').value = state.room.h; renderCornersList(); }
+  function renderWallsList(){
+    var wrap = el('wallsList'); wrap.innerHTML = '';
+    var pts = state.room.points, n = pts.length;
+    for(var idx=0; idx<n; idx++){
+      (function(i){
+        var len = Math.round(edgeLengthCm(i));
+        var card = document.createElement('div');
+        card.className = 'item-card'+(i===openWallIndex?' open':'')+(i===selectedWallIndex?' selected':'');
+        var head = document.createElement('div');
+        head.className = 'item-head';
+        head.innerHTML =
+          '<span class="item-swatch" style="background:'+state.room.wallColor+'; border:1px solid rgba(0,0,0,.15);"></span>'+
+          '<span class="item-name">حيطة '+(i+1)+'</span>'+
+          '<span class="item-dims">'+len+' سم</span>'+
+          '<span class="item-chevron">▾</span>';
+        head.addEventListener('click', function(){
+          var wasOpen = (openWallIndex === i);
+          openWallIndex = wasOpen ? null : i;
+          selectedWallIndex = wasOpen ? null : i;
+          renderWallsList();
+          rebuildRoom();
+        });
+        card.appendChild(head);
+        var body = document.createElement('div');
+        body.className = 'item-body';
+        var nextNum = ((i+1)%n)+1;
+        body.innerHTML =
+          '<div class="field"><label>طول الحيطة (سم) — من الركن '+(i+1)+' للركن '+nextNum+'</label>'+
+          '<input type="number" data-wlen value="'+len+'" min="20" max="3000"></div>';
+        card.appendChild(body);
+        wrap.appendChild(card);
+        if(i === openWallIndex){
+          var inp = body.querySelector('[data-wlen]');
+          inp.addEventListener('change', function(){
+            var newLen = parseInt(inp.value)||len;
+            var ok = setWallLength(i, newLen);
+            if(!ok){
+              alert('الطول ده هيخلي حيطتين يتقاطعوا مع بعض أو مش صالح. جرّب رقم تاني.');
+              inp.value = Math.round(edgeLengthCm(i));
+              return;
+            }
+            rebuildRoom(); renderCornersList(); renderWallsList(); saveStateDebounced();
+          });
+        }
+      })(idx);
+    }
+  }
+
+  function renderWallsListSoft(){
+    var wrap = el('wallsList');
+    var cards = wrap.querySelectorAll('.item-card');
+    cards.forEach(function(card, i){
+      var len = Math.round(edgeLengthCm(i));
+      var dims = card.querySelector('.item-dims');
+      if(dims) dims.textContent = len+' سم';
+      var inp = card.querySelector('[data-wlen]');
+      if(inp && document.activeElement !== inp) inp.value = len;
+    });
+  }
+
+  function exportDesign(){
+    var blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'room-design-' + new Date().toISOString().slice(0,10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+  }
+
+  function importDesign(file){
+    var reader = new FileReader();
+    reader.onload = function(){
+      try{
+        var parsed = JSON.parse(reader.result);
+        state = migrateState(parsed);
+        selectedId=null; openId=null; openWallIndex=null; selectedWallIndex=null;
+        syncRoomAndMaterials();
+        renderItemsList();
+        rebuildAll();
+        frameRoom();
+        saveStateDebounced();
+        alert('تم استيراد التصميم بنجاح.');
+      }catch(e){
+        alert('الملف ده مش صالح أو تالف. جرّب ملف تاني.');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function syncRoomHeightAndCorners(){ el('roomH').value = state.room.h; renderCornersList(); renderWallsList(); }
 
   function syncRoomAndMaterials(){
     el('roomH').value = state.room.h;
@@ -784,6 +931,7 @@
     el('rectW').value = Math.max(100, Math.round(b.w));
     el('rectL').value = Math.max(100, Math.round(b.l));
     renderCornersList();
+    renderWallsList();
     renderOpeningsList();
   }
 
@@ -794,7 +942,7 @@
       var row = document.createElement('div');
       row.className = 'corner-row';
       row.innerHTML =
-        '<span class="idx">'+(i+1)+'</span>'+
+        '<span class="idx" style="color:'+(i===0?'#2E5C8A':'var(--accent)')+'">'+(i+1)+(i===0?' 🔵':'')+'</span>'+
         '<input type="number" data-pf="x" data-i="'+i+'" value="'+p.x+'" placeholder="X">'+
         '<input type="number" data-pf="z" data-i="'+i+'" value="'+p.z+'" placeholder="Z">'+
         '<button type="button" class="ins-btn" data-ins="'+i+'" title="أضف نقطة بعد دي">➕</button>'+
@@ -804,8 +952,18 @@
     wrap.querySelectorAll('[data-pf]').forEach(function(inp){
       inp.addEventListener('change', function(){
         var i=parseInt(inp.getAttribute('data-i')), f=inp.getAttribute('data-pf');
-        state.room.points[i][f] = parseInt(inp.value)||0;
-        rebuildRoom(); saveStateDebounced();
+        var newVal = parseInt(inp.value)||0;
+        var candidate = state.room.points.map(function(pt,idx){
+          if(idx!==i) return pt;
+          var np = {x:pt.x, z:pt.z}; np[f]=newVal; return np;
+        });
+        if(!isSimplePolygon(candidate)){
+          alert('الرقم ده هيخلي حيطتين يتقاطعوا مع بعض. جرّب رقم تاني.');
+          inp.value = state.room.points[i][f];
+          return;
+        }
+        state.room.points[i][f] = newVal;
+        rebuildRoom(); renderWallsList(); saveStateDebounced();
       });
     });
     wrap.querySelectorAll('[data-ins]').forEach(function(btn){
@@ -813,7 +971,8 @@
         var i=parseInt(btn.getAttribute('data-ins'));
         var pts2=state.room.points, p1=pts2[i], p2=pts2[(i+1)%pts2.length];
         pts2.splice(i+1,0,{x:Math.round((p1.x+p2.x)/2), z:Math.round((p1.z+p2.z)/2)});
-        rebuildRoom(); renderCornersList(); saveStateDebounced();
+        openWallIndex=null; selectedWallIndex=null;
+        rebuildRoom(); renderCornersList(); renderWallsList(); saveStateDebounced();
       });
     });
     wrap.querySelectorAll('[data-rm]').forEach(function(btn){
@@ -823,7 +982,8 @@
         state.room.points.splice(i,1);
         state.room.doors = state.room.doors.filter(function(d){return d.edgeIndex!==i;});
         state.room.windows = state.room.windows.filter(function(wd){return wd.edgeIndex!==i;});
-        rebuildRoom(); renderCornersList(); renderOpeningsList(); saveStateDebounced();
+        openWallIndex=null; selectedWallIndex=null;
+        rebuildRoom(); renderCornersList(); renderWallsList(); renderOpeningsList(); saveStateDebounced();
       });
     });
   }
@@ -940,8 +1100,8 @@
         '<div class="field"><label>الارتفاع سم</label><input type="number" data-f="h" value="'+it.h+'" min="5" max="400"></div>'+
       '</div>'+
       '<div class="field"><label>لون القطعة</label><div class="color-row"><input type="color" data-f="color" value="'+it.color+'"><span class="hex-label">'+it.color+'</span></div></div>'+
-      '<div class="field"><label>X — <span data-lab="x">'+it.x+'</span> سم</label><input type="range" data-f="x" min="'+b.minX+'" max="'+maxX+'" value="'+clamp(it.x,b.minX,maxX)+'"></div>'+
-      '<div class="field"><label>Z — <span data-lab="z">'+it.z+'</span> سم</label><input type="range" data-f="z" min="'+b.minZ+'" max="'+maxZ+'" value="'+clamp(it.z,b.minZ,maxZ)+'"></div>'+
+      '<div class="field"><label>X — <span data-lab="x">'+it.x+'</span> سم <span style="color:var(--ink-soft); font-weight:400;">(من الركن 🔵 1)</span></label><input type="range" data-f="x" min="'+b.minX+'" max="'+maxX+'" value="'+clamp(it.x,b.minX,maxX)+'"></div>'+
+      '<div class="field"><label>Z — <span data-lab="z">'+it.z+'</span> سم <span style="color:var(--ink-soft); font-weight:400;">(من الركن 🔵 1)</span></label><input type="range" data-f="z" min="'+b.minZ+'" max="'+maxZ+'" value="'+clamp(it.z,b.minZ,maxZ)+'"></div>'+
       '<div class="field"><label>ارتفاعها عن الأرض (لو معلقة) — '+(it.yBase||0)+' سم</label><input type="range" data-f="yBase" min="0" max="'+maxY+'" value="'+clamp(it.yBase||0,0,maxY)+'"></div>'+
       '<div class="field"><label>الدوران</label><div class="rot-row">'+
         [0,90,180,270].map(function(r){return '<button type="button" class="rot-btn'+(it.rot===r?' active':'')+'" data-rot="'+r+'">'+r+'°</button>';}).join('')+
@@ -1015,6 +1175,13 @@
   }
 
   function bindStaticUI(){
+    el('exportBtn').addEventListener('click', exportDesign);
+    el('importBtn').addEventListener('click', function(){ el('importFile').click(); });
+    el('importFile').addEventListener('change', function(e){
+      if(e.target.files && e.target.files[0]) importDesign(e.target.files[0]);
+      e.target.value = '';
+    });
+
     el('roomH').addEventListener('change', onRoomHeightChange);
     ['wallColor','floorColor','tileSize'].forEach(function(id){
       el(id).addEventListener(id==='tileSize'?'change':'input', onMaterialsChange);
@@ -1030,7 +1197,8 @@
       if(!confirm('هيتم استبدال شكل الحيطة الحالي بمستطيل جديد، والأبواب والشبابيك هتتمسح. تكمل؟')) return;
       state.room.points = defaultRectPoints(w,l);
       state.room.doors = []; state.room.windows = [];
-      rebuildRoom(); renderCornersList(); renderOpeningsList(); frameRoom(); saveStateDebounced();
+      openWallIndex=null; selectedWallIndex=null;
+      rebuildRoom(); renderCornersList(); renderWallsList(); renderOpeningsList(); frameRoom(); saveStateDebounced();
     });
 
     el('addDoorBtn').addEventListener('click', function(){ startPlacement('door'); });
@@ -1045,7 +1213,7 @@
     el('resetBtn').addEventListener('click', function(){
       if(!confirm('هل تريد مسح التصميم الحالي والبدء من جديد؟')) return;
       state = JSON.parse(JSON.stringify(DEFAULT_STATE));
-      selectedId=null; openId=null;
+      selectedId=null; openId=null; openWallIndex=null; selectedWallIndex=null;
       syncRoomAndMaterials(); rebuildAll(); renderItemsList(); frameRoom(); saveStateDebounced();
     });
 
