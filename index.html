@@ -26,6 +26,7 @@
   .view-toggle{pointer-events:auto; display:flex; background:rgba(251,249,244,.92); backdrop-filter:blur(4px); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;}
   .view-toggle button{border:none; background:transparent; padding:8px 14px; font-family:inherit; font-size:13px; font-weight:600; color:var(--ink-soft); cursor:pointer;}
   .view-toggle button.active{background:var(--accent); color:var(--accent-ink);}
+  .view-toggle button:disabled{opacity:.35; cursor:not-allowed;}
 
   .stage-hint{position:absolute; bottom:12px; right:12px; left:12px; text-align:center; pointer-events:none; font-size:12px; color:var(--ink-soft); background:rgba(251,249,244,.85); border-radius:var(--radius); padding:6px 10px; display:inline-block; width:fit-content; margin:0 auto;}
 
@@ -197,9 +198,15 @@
     <div id="canvas-holder"></div>
     <div class="stage-topbar">
       <div class="brand">مصمم الأوضة<span>Room Designer — 3D</span></div>
-      <div class="view-toggle">
-        <button id="view3d" class="active">3D</button>
-        <button id="viewTop">من فوق</button>
+      <div style="display:flex; gap:8px; pointer-events:none;">
+        <div class="view-toggle" id="undoRedoGroup">
+          <button id="undoBtn" title="تراجع (Ctrl+Z)" disabled>↺ تراجع</button>
+          <button id="redoBtn" title="إعادة (Ctrl+Y)" disabled>↻ إعادة</button>
+        </div>
+        <div class="view-toggle">
+          <button id="view3d" class="active">3D</button>
+          <button id="viewTop">من فوق</button>
+        </div>
       </div>
     </div>
     <div class="placement-banner" id="placementBanner">
@@ -234,7 +241,7 @@
     room: {
       points: defaultRectPoints(400,350),
       h:270, wallColor:'#EDE6D6', floorColor:'#C9B08A', tile:40,
-      doors:[], windows:[]
+      doors:[], windows:[], wallColorOverrides:{}
     },
     items: [
       {id:'i1', name:'سرير', type:'bed', w:190, d:140, h:50, x:100, z:80, yBase:0, rot:0, color:'#8C7355'},
@@ -284,6 +291,7 @@
     if(!raw.items) raw.items = [];
     if(!raw.room.doors) raw.room.doors = [];
     if(!raw.room.windows) raw.room.windows = [];
+    if(!raw.room.wallColorOverrides) raw.room.wallColorOverrides = {};
     return raw;
   }
 
@@ -301,6 +309,77 @@
   }
 
   function uid(){ return 'i' + Math.random().toString(36).slice(2,9); }
+
+  // ---------- undo / redo history ----------
+  var undoStack = [], redoStack = [];
+  var MAX_HISTORY = 60;
+  var isRestoringHistory = false;
+  var NON_MUTATING_IDS = ['view3d','viewTop','mobileToggle','panelClose','addToggle','rectToggle','exportBtn','importBtn','placementCancel','undoBtn','redoBtn'];
+
+  function snapshotState(){ return JSON.parse(JSON.stringify(state)); }
+
+  function pushHistory(){
+    if(isRestoringHistory || !state) return;
+    undoStack.push(snapshotState());
+    if(undoStack.length > MAX_HISTORY) undoStack.shift();
+    redoStack.length = 0;
+    updateUndoRedoButtons();
+  }
+
+  function updateUndoRedoButtons(){
+    var ub = document.getElementById('undoBtn'), rb = document.getElementById('redoBtn');
+    if(ub) ub.disabled = undoStack.length === 0;
+    if(rb) rb.disabled = redoStack.length === 0;
+  }
+
+  function refreshAfterHistoryChange(){
+    selectedId = null; openId = null; openWallIndex = null; selectedWallIndex = null;
+    syncRoomAndMaterials();
+    renderItemsList();
+    rebuildAll();
+  }
+
+  function undo(){
+    if(!undoStack.length) return;
+    isRestoringHistory = true;
+    redoStack.push(snapshotState());
+    state = undoStack.pop();
+    refreshAfterHistoryChange();
+    saveStateDebounced();
+    updateUndoRedoButtons();
+    isRestoringHistory = false;
+  }
+  function redo(){
+    if(!redoStack.length) return;
+    isRestoringHistory = true;
+    undoStack.push(snapshotState());
+    state = redoStack.pop();
+    refreshAfterHistoryChange();
+    saveStateDebounced();
+    updateUndoRedoButtons();
+    isRestoringHistory = false;
+  }
+
+  function attachHistoryCapture(){
+    document.addEventListener('focusin', function(e){
+      var t = e.target;
+      if(!t || !t.tagName) return;
+      if((t.tagName==='INPUT' && t.type!=='file') || t.tagName==='SELECT'){
+        pushHistory();
+      }
+    }, true);
+    document.addEventListener('click', function(e){
+      var t = e.target.closest ? e.target.closest('button') : null;
+      if(!t) return;
+      if(t.id && NON_MUTATING_IDS.indexOf(t.id) !== -1) return;
+      pushHistory();
+    }, true);
+    document.addEventListener('keydown', function(e){
+      var key = (e.key||'').toLowerCase();
+      if((e.ctrlKey||e.metaKey) && key==='z' && !e.shiftKey){ e.preventDefault(); undo(); }
+      else if((e.ctrlKey||e.metaKey) && (key==='y' || (key==='z' && e.shiftKey))){ e.preventDefault(); redo(); }
+    });
+  }
 
   function roomBounds(){
     var pts = state.room.points;
@@ -470,6 +549,7 @@
       raycaster.setFromCamera(ndc, camera);
       var hVertex = raycaster.intersectObjects(handlesGroup.children, false);
       if(hVertex.length){
+        pushHistory();
         mode='vertex'; dragPointIndex = hVertex[0].object.userData.pointIndex;
         el.style.cursor='grabbing'; el.setPointerCapture(e.pointerId); return;
       }
@@ -568,6 +648,7 @@
     document.getElementById('placementBanner').classList.remove('show');
   }
   function placeOpeningAt(hit){
+    pushHistory();
     var ud = hit.object.userData;
     var i = ud.edgeIndex;
     var lengthCm = edgeLengthCm(i);
@@ -635,7 +716,6 @@
     var floorMat = new THREE.MeshStandardMaterial({map:makeFloorTexture(state.room.floorColor, state.room.tile), roughness:0.85, side:THREE.DoubleSide});
     roomGroup.add(new THREE.Mesh(floorGeo, floorMat));
 
-    var wallMat = new THREE.MeshStandardMaterial({color:new THREE.Color(state.room.wallColor), roughness:0.95, side:THREE.DoubleSide});
     var wallMatHi = new THREE.MeshStandardMaterial({color:0xA8562E, roughness:0.85, side:THREE.DoubleSide, transparent:true, opacity:0.65});
     var doorLeafMat = new THREE.MeshStandardMaterial({color:0x6B4A34, roughness:0.55});
     var handleMat = new THREE.MeshStandardMaterial({color:0x33302B, roughness:0.35, metalness:0.55});
@@ -650,6 +730,8 @@
       var lengthM = Math.sqrt(dxm*dxm+dzm*dzm);
       if(lengthM < 0.001) continue;
       var angle = Math.atan2(-dzm, dxm);
+      var edgeColor = (state.room.wallColorOverrides && state.room.wallColorOverrides[i]) ? state.room.wallColorOverrides[i] : state.room.wallColor;
+      var wallMatEdge = new THREE.MeshStandardMaterial({color:new THREE.Color(edgeColor), roughness:0.95, side:THREE.DoubleSide});
 
       outlineBottom.push(new THREE.Vector3(p1x,0.002,p1z));
       outlineTop.push(new THREE.Vector3(p1x,h,p1z));
@@ -674,7 +756,7 @@
         if(u1-u0 < 0.001 || v1-v0 < 0.001) return;
         var c = toWorld((u0+u1)/2, (v0+v1)/2);
         var geo = new THREE.PlaneGeometry(u1-u0, v1-v0);
-        var mesh = new THREE.Mesh(geo, i===selectedWallIndex ? wallMatHi : wallMat);
+        var mesh = new THREE.Mesh(geo, i===selectedWallIndex ? wallMatHi : wallMatEdge);
         mesh.rotation.y = angle;
         mesh.position.set(c.x, c.y, c.z);
         mesh.userData = {isWall:true, edgeIndex:i, p1x:p1x,p1z:p1z,p2x:p2x,p2z:p2z};
@@ -887,10 +969,12 @@
         var len = Math.round(edgeLengthCm(i));
         var card = document.createElement('div');
         card.className = 'item-card'+(i===openWallIndex?' open':'')+(i===selectedWallIndex?' selected':'');
+        var wallColorNow = (state.room.wallColorOverrides && state.room.wallColorOverrides[i]) ? state.room.wallColorOverrides[i] : state.room.wallColor;
+        var hasOverride = !!(state.room.wallColorOverrides && state.room.wallColorOverrides[i]);
         var head = document.createElement('div');
         head.className = 'item-head';
         head.innerHTML =
-          '<span class="item-swatch" style="background:'+state.room.wallColor+'; border:1px solid rgba(0,0,0,.15);"></span>'+
+          '<span class="item-swatch" style="background:'+wallColorNow+'; border:1px solid rgba(0,0,0,.15);"></span>'+
           '<span class="item-name">حيطة '+(i+1)+'</span>'+
           '<span class="item-dims">'+len+' سم</span>'+
           '<span class="item-chevron">▾</span>';
@@ -907,7 +991,12 @@
         var nextNum = ((i+1)%n)+1;
         body.innerHTML =
           '<div class="field"><label>طول الحيطة (سم) — من الركن '+(i+1)+' للركن '+nextNum+'</label>'+
-          '<input type="number" data-wlen value="'+len+'" min="20" max="3000"></div>';
+          '<input type="number" data-wlen value="'+len+'" min="20" max="3000"></div>'+
+          '<div class="field"><label>لون الحيطة دي</label><div class="color-row">'+
+            '<input type="color" data-wallcolor value="'+wallColorNow+'">'+
+            '<span class="hex-label">'+(hasOverride ? 'لون خاص بالحيطة دي' : 'بيستخدم اللون العام')+'</span>'+
+            (hasOverride ? '<button type="button" data-wallcolor-reset style="border:none; background:none; color:var(--accent); font-size:11px; text-decoration:underline; margin-right:auto;">رجّع اللون العام</button>' : '')+
+          '</div></div>';
         card.appendChild(body);
         wrap.appendChild(card);
         if(i === openWallIndex){
@@ -922,6 +1011,21 @@
             }
             rebuildRoom(); renderCornersList(); renderWallsList(); keepItemsInBounds(); rebuildItems(); renderItemsList(); saveStateDebounced();
           });
+          var colorInp = body.querySelector('[data-wallcolor]');
+          if(colorInp){
+            colorInp.addEventListener('input', function(){
+              if(!state.room.wallColorOverrides) state.room.wallColorOverrides = {};
+              state.room.wallColorOverrides[i] = colorInp.value;
+              rebuildRoom(); renderWallsList(); saveStateDebounced();
+            });
+          }
+          var resetColorBtn = body.querySelector('[data-wallcolor-reset]');
+          if(resetColorBtn){
+            resetColorBtn.addEventListener('click', function(){
+              delete state.room.wallColorOverrides[i];
+              rebuildRoom(); renderWallsList(); saveStateDebounced();
+            });
+          }
         }
       })(idx);
     }
@@ -956,6 +1060,7 @@
     reader.onload = function(){
       try{
         var parsed = JSON.parse(reader.result);
+        pushHistory();
         state = migrateState(parsed);
         selectedId=null; openId=null; openWallIndex=null; selectedWallIndex=null;
         syncRoomAndMaterials();
@@ -1283,6 +1388,9 @@
   }
 
   function bindStaticUI(){
+    el('undoBtn').addEventListener('click', undo);
+    el('redoBtn').addEventListener('click', redo);
+
     el('exportBtn').addEventListener('click', exportDesign);
     el('importBtn').addEventListener('click', function(){ el('importFile').click(); });
     el('importFile').addEventListener('change', function(e){
@@ -1338,6 +1446,8 @@
   loadState().then(function(){
     initThree();
     bindStaticUI();
+    attachHistoryCapture();
+    updateUndoRedoButtons();
     buildPresetMenu();
     syncRoomAndMaterials();
     renderItemsList();
