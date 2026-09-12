@@ -141,6 +141,7 @@
 
       <div class="section">
         <div class="section-title">الحيطان <small>دوس على أي حيطة لتحددها وتغيّر طولها</small></div>
+        <p class="section-note">نفس الأرقام هنا هي اللي هتستخدمها بعدين وانت بتحدد مكان أي قطعة أثاث بالنسبة لأي حيطة.</p>
         <div id="wallsList"></div>
       </div>
 
@@ -343,6 +344,45 @@
     if(!isSimplePolygon(candidate)) return false;
     pts[p2idx] = newP2;
     return true;
+  }
+
+  function pointInPolygon(pt, pts){
+    var inside = false;
+    for(var i=0, j=pts.length-1; i<pts.length; j=i++){
+      var xi=pts[i].x, zi=pts[i].z, xj=pts[j].x, zj=pts[j].z;
+      var intersect = ((zi>pt.z) !== (zj>pt.z)) && (pt.x < (xj-xi)*(pt.z-zi)/(zj-zi)+xi);
+      if(intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  function getWallFrame(edgeIndex){
+    var pts = state.room.points, n = pts.length;
+    edgeIndex = Math.max(0, Math.min(n-1, edgeIndex));
+    var p1 = pts[edgeIndex], p2 = pts[(edgeIndex+1)%n];
+    var dx = p2.x-p1.x, dz = p2.z-p1.z;
+    var length = Math.sqrt(dx*dx+dz*dz) || 1;
+    var uHat = {x:dx/length, z:dz/length};
+    var n1 = {x:-uHat.z, z:uHat.x};
+    var n2 = {x:uHat.z, z:-uHat.x};
+    var mid = {x:(p1.x+p2.x)/2, z:(p1.z+p2.z)/2};
+    var probe = {x:mid.x+n1.x*5, z:mid.z+n1.z*5};
+    var nIn = pointInPolygon(probe, pts) ? n1 : n2;
+    return {p1:p1, p2:p2, uHat:uHat, nIn:nIn, length:length};
+  }
+
+  function worldToWallUV(pt, frame){
+    var relX = pt.x-frame.p1.x, relZ = pt.z-frame.p1.z;
+    return {
+      u: relX*frame.uHat.x + relZ*frame.uHat.z,
+      v: relX*frame.nIn.x + relZ*frame.nIn.z
+    };
+  }
+  function wallUVToWorld(u, v, frame){
+    return {
+      x: frame.p1.x + frame.uHat.x*u + frame.nIn.x*v,
+      z: frame.p1.z + frame.uHat.z*u + frame.nIn.z*v
+    };
   }
 
   // ---------- Three.js scene ----------
@@ -1089,9 +1129,16 @@
   }
 
   function buildItemBodyHtml(it){
-    var b = roomBounds();
-    var maxX = Math.round(b.maxX - it.w), maxZ = Math.round(b.maxZ - it.d);
     var maxY = Math.max(0, state.room.h - it.h);
+    var pts = state.room.points, wallCount = pts.length;
+    var refWall = (it.refWall!=null && it.refWall < wallCount) ? it.refWall : 0;
+    var frame = getWallFrame(refWall);
+    var centerCm = {x: it.x + it.w/2, z: it.z + it.d/2};
+    var uv = worldToWallUV(centerCm, frame);
+    var wallOptions = '';
+    for(var wi=0; wi<wallCount; wi++){
+      wallOptions += '<option value="'+wi+'"'+(wi===refWall?' selected':'')+'>حيطة '+(wi+1)+'</option>';
+    }
     return ''+
       '<div class="field"><label>الاسم</label><input type="text" data-f="name" value="'+escapeHtml(it.name)+'"></div>'+
       '<div class="grid3">'+
@@ -1100,8 +1147,12 @@
         '<div class="field"><label>الارتفاع سم</label><input type="number" data-f="h" value="'+it.h+'" min="5" max="400"></div>'+
       '</div>'+
       '<div class="field"><label>لون القطعة</label><div class="color-row"><input type="color" data-f="color" value="'+it.color+'"><span class="hex-label">'+it.color+'</span></div></div>'+
-      '<div class="field"><label>X — <span data-lab="x">'+it.x+'</span> سم <span style="color:var(--ink-soft); font-weight:400;">(من الركن 🔵 1)</span></label><input type="range" data-f="x" min="'+b.minX+'" max="'+maxX+'" value="'+clamp(it.x,b.minX,maxX)+'"></div>'+
-      '<div class="field"><label>Z — <span data-lab="z">'+it.z+'</span> سم <span style="color:var(--ink-soft); font-weight:400;">(من الركن 🔵 1)</span></label><input type="range" data-f="z" min="'+b.minZ+'" max="'+maxZ+'" value="'+clamp(it.z,b.minZ,maxZ)+'"></div>'+
+      '<div class="field"><label>حدد مكانها بالنسبة لحيطة رقم</label><select data-wf="refWall">'+wallOptions+'</select></div>'+
+      '<div class="grid2">'+
+        '<div class="field"><label>بعدها للجوه من الحيطة دي (سم)</label><input type="number" data-wf="wallV" value="'+Math.round(uv.v)+'"></div>'+
+        '<div class="field"><label>انزلاقها بمحاذاة الحيطة (سم)</label><input type="number" data-wf="wallU" value="'+Math.round(uv.u)+'"></div>'+
+      '</div>'+
+      '<p class="section-note" style="margin-top:-4px;">المقاسين دول بيتحسبوا لنص القطعة، وبيتقاسوا من أول ركن في الحيطة اللي اخترتها.</p>'+
       '<div class="field"><label>ارتفاعها عن الأرض (لو معلقة) — '+(it.yBase||0)+' سم</label><input type="range" data-f="yBase" min="0" max="'+maxY+'" value="'+clamp(it.yBase||0,0,maxY)+'"></div>'+
       '<div class="field"><label>الدوران</label><div class="rot-row">'+
         [0,90,180,270].map(function(r){return '<button type="button" class="rot-btn'+(it.rot===r?' active':'')+'" data-rot="'+r+'">'+r+'°</button>';}).join('')+
@@ -1119,14 +1170,38 @@
         it[f] = val;
         var lab = body.querySelector('[data-lab="'+f+'"]');
         if(lab) lab.textContent = val;
-        if(f==='w'||f==='d'){
-          var b = roomBounds();
-          it.x = clamp(it.x, b.minX, Math.max(b.minX, b.maxX-it.w));
-          it.z = clamp(it.z, b.minZ, Math.max(b.minZ, b.maxZ-it.d));
-        }
         rebuildItems(); renderItemsList_soft(); saveStateDebounced();
       });
     });
+
+    var wallSelect = body.querySelector('[data-wf="refWall"]');
+    var vInput = body.querySelector('[data-wf="wallV"]');
+    var uInput = body.querySelector('[data-wf="wallU"]');
+    function applyWallUV(){
+      var wi = parseInt(wallSelect.value)||0;
+      var frame = getWallFrame(wi);
+      var v = parseFloat(vInput.value)||0;
+      var u = parseFloat(uInput.value)||0;
+      var centerWorld = wallUVToWorld(u, v, frame);
+      it.x = Math.round(centerWorld.x - it.w/2);
+      it.z = Math.round(centerWorld.z - it.d/2);
+      it.refWall = wi;
+      rebuildItems(); renderItemsList_soft(); saveStateDebounced();
+    }
+    if(wallSelect){
+      wallSelect.addEventListener('change', function(){
+        it.refWall = parseInt(wallSelect.value)||0;
+        var frame = getWallFrame(it.refWall);
+        var centerCm = {x: it.x+it.w/2, z: it.z+it.d/2};
+        var uv = worldToWallUV(centerCm, frame);
+        vInput.value = Math.round(uv.v);
+        uInput.value = Math.round(uv.u);
+        saveStateDebounced();
+      });
+    }
+    if(vInput) vInput.addEventListener('change', applyWallUV);
+    if(uInput) uInput.addEventListener('change', applyWallUV);
+
     body.querySelectorAll('[data-rot]').forEach(function(btn){
       btn.addEventListener('click', function(){
         it.rot = parseInt(btn.getAttribute('data-rot'));
