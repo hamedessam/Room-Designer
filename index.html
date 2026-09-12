@@ -148,7 +148,7 @@
 
       <div class="section">
         <div class="section-title">تعديل شكل الحيطة (متقدم) <small>لعمل نتوء أو بروز</small></div>
-        <p class="section-note">استخدم قايمة "الحيطان" فوق عشان تغيّر طول أي حيطة عادي. القسم ده تستخدمه بس لما تحب تعمل نتوء أو بروز في شكل الأوضة، عن طريق سحب ركن لمكان تاني — كل ركن ليه موضعه بإحداثيين: X (يمين/شمال) و Z (قدام/ورا)، بيتقاسوا من الركن 🔵 الأول.</p>
+        <p class="section-note">استخدم قايمة "الحيطان" فوق عشان تغيّر طول أي حيطة عادي. القسم ده تستخدمه بس لما تحب تعمل نتوء أو بروز في شكل الأوضة، عن طريق سحب ركن لمكان تاني.</p>
         <div class="field"><label>ارتفاع الأوضة (سم)</label><input type="number" id="roomH" min="180" max="500" step="1"></div>
         <div id="cornersList"></div>
         <button type="button" class="btn-secondary" id="rectToggle">🔄 ابدأ من مستطيل بسيط</button>
@@ -462,6 +462,44 @@
       x: frame.p1.x + frame.uHat.x*u + frame.nIn.x*v,
       z: frame.p1.z + frame.uHat.z*u + frame.nIn.z*v
     };
+  }
+
+  function edgeOtherPoint(edgeIdx, sharedPointIdx){
+    var n = state.room.points.length;
+    var p1idx = edgeIdx, p2idx = (edgeIdx+1)%n;
+    return (p1idx === sharedPointIdx) ? p2idx : p1idx;
+  }
+
+  function findSharedCornerIndex(edgeA, edgeB){
+    var n = state.room.points.length;
+    var aPts = [edgeA, (edgeA+1)%n];
+    var bPts = [edgeB, (edgeB+1)%n];
+    for(var i=0;i<2;i++){
+      for(var j=0;j<2;j++){
+        if(aPts[i] === bPts[j]) return aPts[i];
+      }
+    }
+    return null;
+  }
+
+  function getCornerPlacement(edgeA, edgeB, distCm){
+    var sharedIdx = findSharedCornerIndex(edgeA, edgeB);
+    if(sharedIdx == null) return null;
+    var pts = state.room.points;
+    var corner = pts[sharedIdx];
+    var otherA = pts[edgeOtherPoint(edgeA, sharedIdx)];
+    var otherB = pts[edgeOtherPoint(edgeB, sharedIdx)];
+    var dirA = {x:otherA.x-corner.x, z:otherA.z-corner.z};
+    var lenA = Math.sqrt(dirA.x*dirA.x+dirA.z*dirA.z)||1;
+    dirA.x/=lenA; dirA.z/=lenA;
+    var dirB = {x:otherB.x-corner.x, z:otherB.z-corner.z};
+    var lenB = Math.sqrt(dirB.x*dirB.x+dirB.z*dirB.z)||1;
+    dirB.x/=lenB; dirB.z/=lenB;
+    var bis = {x:dirA.x+dirB.x, z:dirA.z+dirB.z};
+    var bisLen = Math.sqrt(bis.x*bis.x+bis.z*bis.z);
+    if(bisLen < 0.0001){ bis = {x:dirA.x, z:dirA.z}; bisLen = 1; }
+    bis.x/=bisLen; bis.z/=bisLen;
+    return { x: corner.x + bis.x*distCm, z: corner.z + bis.z*distCm };
   }
 
   // ---------- Three.js scene ----------
@@ -817,7 +855,7 @@
 
     var handleGeo = new THREE.CylinderGeometry(0.09,0.09,0.03,20);
     pts.forEach(function(p,i){
-      var handle = new THREE.Mesh(handleGeo, new THREE.MeshBasicMaterial({color: i===0 ? 0x2E5C8A : 0xA8562E}));
+      var handle = new THREE.Mesh(handleGeo, new THREE.MeshBasicMaterial({color:0xA8562E}));
       handle.position.set(p.x/100, 0.02, p.z/100);
       handle.userData.pointIndex = i;
       handlesGroup.add(handle);
@@ -1103,7 +1141,7 @@
       var row = document.createElement('div');
       row.className = 'corner-row';
       row.innerHTML =
-        '<span class="idx" style="color:'+(i===0?'#2E5C8A':'var(--accent)')+'">'+(i+1)+(i===0?' 🔵':'')+'</span>'+
+        '<span class="idx">'+(i+1)+'</span>'+
         '<input type="number" data-pf="x" data-i="'+i+'" value="'+p.x+'" placeholder="X">'+
         '<input type="number" data-pf="z" data-i="'+i+'" value="'+p.z+'" placeholder="Z">'+
         '<button type="button" class="ins-btn" data-ins="'+i+'" title="أضف نقطة بعد دي">➕</button>'+
@@ -1252,13 +1290,15 @@
   function buildItemBodyHtml(it){
     var maxY = Math.max(0, state.room.h - it.h);
     var pts = state.room.points, wallCount = pts.length;
-    var refWall = (it.refWall!=null && it.refWall < wallCount) ? it.refWall : 0;
-    var frame = getWallFrame(refWall);
-    var centerCm = {x: it.x + it.w/2, z: it.z + it.d/2};
-    var uv = worldToWallUV(centerCm, frame);
-    var wallOptions = '';
+    var cornerA = (it.cornerA!=null && it.cornerA < wallCount) ? it.cornerA : 0;
+    var cornerB = (it.cornerB!=null && it.cornerB < wallCount) ? it.cornerB : (wallCount>1 ? 1 : 0);
+    var dist = (it.cornerDist!=null) ? it.cornerDist : Math.round(Math.sqrt(it.w*it.w+it.d*it.d)/2);
+    var b = roomBounds();
+    var maxDist = Math.max(200, Math.round(Math.max(b.w,b.l)));
+    var wallOptionsA = '', wallOptionsB = '';
     for(var wi=0; wi<wallCount; wi++){
-      wallOptions += '<option value="'+wi+'"'+(wi===refWall?' selected':'')+'>حيطة '+(wi+1)+'</option>';
+      wallOptionsA += '<option value="'+wi+'"'+(wi===cornerA?' selected':'')+'>حيطة '+(wi+1)+'</option>';
+      wallOptionsB += '<option value="'+wi+'"'+(wi===cornerB?' selected':'')+'>حيطة '+(wi+1)+'</option>';
     }
     return ''+
       '<div class="field"><label>الاسم</label><input type="text" data-f="name" value="'+escapeHtml(it.name)+'"></div>'+
@@ -1268,14 +1308,14 @@
         '<div class="field"><label>الارتفاع سم</label><input type="number" data-f="h" value="'+it.h+'" min="5" max="400"></div>'+
       '</div>'+
       '<div class="field"><label>لون القطعة</label><div class="color-row"><input type="color" data-f="color" value="'+it.color+'"><span class="hex-label">'+it.color+'</span></div></div>'+
-      '<div class="field"><label>حدد مكانها بالنسبة لحيطة رقم</label><select data-wf="refWall">'+wallOptions+'</select></div>'+
-      '<div class="field"><label>بعدها للجوه من الحيطة دي — <span data-wflab="wallV">'+Math.round(uv.v)+'</span> سم</label>'+
-        '<input type="range" data-wf="wallVRange" min="-30" max="'+Math.max(60, Math.round(Math.max(roomBounds().w, roomBounds().l)))+'" value="'+Math.round(uv.v)+'">'+
-        '<input type="number" data-wf="wallV" value="'+Math.round(uv.v)+'" style="margin-top:6px;"></div>'+
-      '<div class="field"><label>انزلاقها بمحاذاة الحيطة — <span data-wflab="wallU">'+Math.round(uv.u)+'</span> سم</label>'+
-        '<input type="range" data-wf="wallURange" min="0" max="'+Math.max(20, Math.round(frame.length))+'" value="'+Math.round(uv.u)+'">'+
-        '<input type="number" data-wf="wallU" value="'+Math.round(uv.u)+'" style="margin-top:6px;"></div>'+
-      '<p class="section-note" style="margin-top:-4px;">المقاسين دول بيتحسبوا لنص القطعة، وبيتقاسوا من أول ركن في الحيطة اللي اخترتها.</p>'+
+      '<div class="field"><label>حطها في الركن بين حيطة</label><div class="grid2">'+
+        '<select data-cf="cornerA">'+wallOptionsA+'</select>'+
+        '<select data-cf="cornerB">'+wallOptionsB+'</select>'+
+      '</div></div>'+
+      '<div class="field"><label>المسافة من الركن — <span data-cflab="dist">'+dist+'</span> سم <span style="color:var(--ink-soft); font-weight:400;">(٠ = لزقانة في الركن تمامًا)</span></label>'+
+        '<input type="range" data-cf="distRange" min="0" max="'+maxDist+'" value="'+dist+'">'+
+        '<input type="number" data-cf="dist" value="'+dist+'" style="margin-top:6px;"></div>'+
+      '<p class="section-note" style="margin-top:-4px;">لازم الحيطتين يكونوا متجاورين (بينهم ركن مشترك). المسافة بتتحسب لنص القطعة.</p>'+
       '<div class="field"><label>ارتفاعها عن الأرض (لو معلقة) — '+(it.yBase||0)+' سم</label><input type="range" data-f="yBase" min="0" max="'+maxY+'" value="'+clamp(it.yBase||0,0,maxY)+'"></div>'+
       '<div class="field"><label>الدوران</label><div class="rot-row">'+
         [0,90,180,270].map(function(r){return '<button type="button" class="rot-btn'+(it.rot===r?' active':'')+'" data-rot="'+r+'">'+r+'°</button>';}).join('')+
@@ -1297,48 +1337,30 @@
       });
     });
 
-    var wallSelect = body.querySelector('[data-wf="refWall"]');
-    var vInput = body.querySelector('[data-wf="wallV"]');
-    var uInput = body.querySelector('[data-wf="wallU"]');
-    var vRange = body.querySelector('[data-wf="wallVRange"]');
-    var uRange = body.querySelector('[data-wf="wallURange"]');
-    var vLab = body.querySelector('[data-wflab="wallV"]');
-    var uLab = body.querySelector('[data-wflab="wallU"]');
+    var cornerASel = body.querySelector('[data-cf="cornerA"]');
+    var cornerBSel = body.querySelector('[data-cf="cornerB"]');
+    var distInput = body.querySelector('[data-cf="dist"]');
+    var distRange = body.querySelector('[data-cf="distRange"]');
+    var distLab = body.querySelector('[data-cflab="dist"]');
 
-    function applyWallUV(){
-      var wi = parseInt(wallSelect.value)||0;
-      var frame = getWallFrame(wi);
-      var v = parseFloat(vInput.value)||0;
-      var u = parseFloat(uInput.value)||0;
-      var centerWorld = wallUVToWorld(u, v, frame);
-      it.x = Math.round(centerWorld.x - it.w/2);
-      it.z = Math.round(centerWorld.z - it.d/2);
-      it.refWall = wi;
+    function applyCorner(){
+      var eA = parseInt(cornerASel.value)||0;
+      var eB = parseInt(cornerBSel.value)||0;
+      if(eA === eB){ alert('اختار حيطتين مختلفين.'); return; }
+      var pos = getCornerPlacement(eA, eB, parseFloat(distInput.value)||0);
+      if(!pos){ alert('الحيطتين دول لازم يكونوا متجاورين (بينهم ركن مشترك).'); return; }
+      it.x = Math.round(pos.x - it.w/2);
+      it.z = Math.round(pos.z - it.d/2);
+      it.cornerA = eA; it.cornerB = eB; it.cornerDist = parseFloat(distInput.value)||0;
       rebuildItems(); renderItemsList_soft(); saveStateDebounced();
     }
-    function syncVFromRange(){ vInput.value = vRange.value; if(vLab) vLab.textContent = vRange.value; applyWallUV(); }
-    function syncUFromRange(){ uInput.value = uRange.value; if(uLab) uLab.textContent = uRange.value; applyWallUV(); }
-    function syncVFromNumber(){ vRange.value = vInput.value; if(vLab) vLab.textContent = vInput.value; applyWallUV(); }
-    function syncUFromNumber(){ uRange.value = uInput.value; if(uLab) uLab.textContent = uInput.value; applyWallUV(); }
+    function syncDistFromRange(){ distInput.value=distRange.value; if(distLab) distLab.textContent=distRange.value; applyCorner(); }
+    function syncDistFromNumber(){ distRange.value=distInput.value; if(distLab) distLab.textContent=distInput.value; applyCorner(); }
 
-    if(wallSelect){
-      wallSelect.addEventListener('change', function(){
-        it.refWall = parseInt(wallSelect.value)||0;
-        var frame = getWallFrame(it.refWall);
-        var centerCm = {x: it.x+it.w/2, z: it.z+it.d/2};
-        var uv = worldToWallUV(centerCm, frame);
-        var newV = Math.round(uv.v), newU = Math.round(uv.u);
-        vInput.value = newV; if(vRange){ vRange.max = Math.max(vRange.max, newV); vRange.value = newV; }
-        uInput.value = newU; if(uRange){ uRange.max = Math.max(Math.round(frame.length), 20); uRange.value = newU; }
-        if(vLab) vLab.textContent = newV;
-        if(uLab) uLab.textContent = newU;
-        saveStateDebounced();
-      });
-    }
-    if(vInput) vInput.addEventListener('change', syncVFromNumber);
-    if(uInput) uInput.addEventListener('change', syncUFromNumber);
-    if(vRange) vRange.addEventListener('input', syncVFromRange);
-    if(uRange) uRange.addEventListener('input', syncUFromRange);
+    if(cornerASel) cornerASel.addEventListener('change', applyCorner);
+    if(cornerBSel) cornerBSel.addEventListener('change', applyCorner);
+    if(distInput) distInput.addEventListener('change', syncDistFromNumber);
+    if(distRange) distRange.addEventListener('input', syncDistFromRange);
 
     body.querySelectorAll('[data-rot]').forEach(function(btn){
       btn.addEventListener('click', function(){
