@@ -984,14 +984,39 @@
 
   function rebuildAll(){ rebuildRoom(); rebuildItems(); }
 
-  function keepItemsInBounds(){
-    var b = roomBounds();
-    state.items.forEach(function(it){
-      var maxX = Math.max(b.minX, b.maxX - it.w);
-      var maxZ = Math.max(b.minZ, b.maxZ - it.d);
-      it.x = clamp(it.x, b.minX, maxX);
-      it.z = clamp(it.z, b.minZ, maxZ);
+  function boxCornersWorldCm(it){
+    var cx = it.x + it.w/2, cz = it.z + it.d/2;
+    var rot = -(it.rot||0) * Math.PI/180;
+    var hw = it.w/2, hd = it.d/2;
+    var cosR = Math.cos(rot), sinR = Math.sin(rot);
+    return [[-hw,-hd],[hw,-hd],[hw,hd],[-hw,hd]].map(function(lc){
+      var lx=lc[0], lz=lc[1];
+      return { x: cx + lx*cosR + lz*sinR, z: cz - lx*sinR + lz*cosR };
     });
+  }
+
+  function itemFullyInside(it){
+    return boxCornersWorldCm(it).every(function(c){ return pointInPolygon(c, state.room.points); });
+  }
+
+  function containItemInRoom(it){
+    if(itemFullyInside(it)) return;
+    var b = roomBounds();
+    var targetX = Math.round((b.minX+b.maxX)/2 - it.w/2);
+    var targetZ = Math.round((b.minZ+b.maxZ)/2 - it.d/2);
+    var startX = it.x, startZ = it.z;
+    for(var step=1; step<=20; step++){
+      var t = step/20;
+      it.x = Math.round(startX + (targetX-startX)*t);
+      it.z = Math.round(startZ + (targetZ-startZ)*t);
+      if(itemFullyInside(it)) return;
+    }
+    it.x = clamp(it.x, b.minX, Math.max(b.minX, b.maxX-it.w));
+    it.z = clamp(it.z, b.minZ, Math.max(b.minZ, b.maxZ-it.d));
+  }
+
+  function keepItemsInBounds(){
+    state.items.forEach(function(it){ containItemInRoom(it); });
   }
 
   // ---------- UI ----------
@@ -1289,17 +1314,8 @@
 
   function buildItemBodyHtml(it){
     var maxY = Math.max(0, state.room.h - it.h);
-    var pts = state.room.points, wallCount = pts.length;
-    var cornerA = (it.cornerA!=null && it.cornerA < wallCount) ? it.cornerA : 0;
-    var cornerB = (it.cornerB!=null && it.cornerB < wallCount) ? it.cornerB : (wallCount>1 ? 1 : 0);
-    var dist = (it.cornerDist!=null) ? it.cornerDist : Math.round(Math.sqrt(it.w*it.w+it.d*it.d)/2);
     var b = roomBounds();
-    var maxDist = Math.max(200, Math.round(Math.max(b.w,b.l)));
-    var wallOptionsA = '', wallOptionsB = '';
-    for(var wi=0; wi<wallCount; wi++){
-      wallOptionsA += '<option value="'+wi+'"'+(wi===cornerA?' selected':'')+'>حيطة '+(wi+1)+'</option>';
-      wallOptionsB += '<option value="'+wi+'"'+(wi===cornerB?' selected':'')+'>حيطة '+(wi+1)+'</option>';
-    }
+    var maxX = Math.round(b.maxX - it.w), maxZ = Math.round(b.maxZ - it.d);
     return ''+
       '<div class="field"><label>الاسم</label><input type="text" data-f="name" value="'+escapeHtml(it.name)+'"></div>'+
       '<div class="grid3">'+
@@ -1308,14 +1324,9 @@
         '<div class="field"><label>الارتفاع سم</label><input type="number" data-f="h" value="'+it.h+'" min="5" max="400"></div>'+
       '</div>'+
       '<div class="field"><label>لون القطعة</label><div class="color-row"><input type="color" data-f="color" value="'+it.color+'"><span class="hex-label">'+it.color+'</span></div></div>'+
-      '<div class="field"><label>حطها في الركن بين حيطة</label><div class="grid2">'+
-        '<select data-cf="cornerA">'+wallOptionsA+'</select>'+
-        '<select data-cf="cornerB">'+wallOptionsB+'</select>'+
-      '</div></div>'+
-      '<div class="field"><label>المسافة من الركن — <span data-cflab="dist">'+dist+'</span> سم <span style="color:var(--ink-soft); font-weight:400;">(٠ = لزقانة في الركن تمامًا)</span></label>'+
-        '<input type="range" data-cf="distRange" min="0" max="'+maxDist+'" value="'+dist+'">'+
-        '<input type="number" data-cf="dist" value="'+dist+'" style="margin-top:6px;"></div>'+
-      '<p class="section-note" style="margin-top:-4px;">لازم الحيطتين يكونوا متجاورين (بينهم ركن مشترك). المسافة بتتحسب لنص القطعة.</p>'+
+      '<div class="field"><label>الموضع الأفقي (X) — <span data-lab="x">'+it.x+'</span> سم</label><input type="range" data-f="x" min="'+b.minX+'" max="'+maxX+'" value="'+clamp(it.x,b.minX,maxX)+'"></div>'+
+      '<div class="field"><label>الموضع للعمق (Z) — <span data-lab="z">'+it.z+'</span> سم</label><input type="range" data-f="z" min="'+b.minZ+'" max="'+maxZ+'" value="'+clamp(it.z,b.minZ,maxZ)+'"></div>'+
+      '<p class="section-note" style="margin-top:-4px;">اسحب وشوف القطعة بتتحرك لايف في العرض — البرنامج مش هيسيبها تطلع بره الحيطة أبدًا حتى لو السلايدر وصل الآخر.</p>'+
       '<div class="field"><label>ارتفاعها عن الأرض (لو معلقة) — '+(it.yBase||0)+' سم</label><input type="range" data-f="yBase" min="0" max="'+maxY+'" value="'+clamp(it.yBase||0,0,maxY)+'"></div>'+
       '<div class="field"><label>الدوران</label><div class="rot-row">'+
         [0,90,180,270].map(function(r){return '<button type="button" class="rot-btn'+(it.rot===r?' active':'')+'" data-rot="'+r+'">'+r+'°</button>';}).join('')+
@@ -1331,40 +1342,25 @@
         var val = input.value;
         if(input.type==='number'||input.type==='range') val = parseFloat(val)||0;
         it[f] = val;
+        containItemInRoom(it);
         var lab = body.querySelector('[data-lab="'+f+'"]');
-        if(lab) lab.textContent = val;
+        if(lab) lab.textContent = it[f];
+        if(f==='x' || f==='z'){
+          var xInput = body.querySelector('[data-f="x"]'), zInput = body.querySelector('[data-f="z"]');
+          if(xInput && document.activeElement!==xInput) xInput.value = it.x;
+          if(zInput && document.activeElement!==zInput) zInput.value = it.z;
+          var xLab = body.querySelector('[data-lab="x"]'), zLab = body.querySelector('[data-lab="z"]');
+          if(xLab) xLab.textContent = it.x;
+          if(zLab) zLab.textContent = it.z;
+        }
         rebuildItems(); renderItemsList_soft(); saveStateDebounced();
       });
     });
 
-    var cornerASel = body.querySelector('[data-cf="cornerA"]');
-    var cornerBSel = body.querySelector('[data-cf="cornerB"]');
-    var distInput = body.querySelector('[data-cf="dist"]');
-    var distRange = body.querySelector('[data-cf="distRange"]');
-    var distLab = body.querySelector('[data-cflab="dist"]');
-
-    function applyCorner(){
-      var eA = parseInt(cornerASel.value)||0;
-      var eB = parseInt(cornerBSel.value)||0;
-      if(eA === eB){ alert('اختار حيطتين مختلفين.'); return; }
-      var pos = getCornerPlacement(eA, eB, parseFloat(distInput.value)||0);
-      if(!pos){ alert('الحيطتين دول لازم يكونوا متجاورين (بينهم ركن مشترك).'); return; }
-      it.x = Math.round(pos.x - it.w/2);
-      it.z = Math.round(pos.z - it.d/2);
-      it.cornerA = eA; it.cornerB = eB; it.cornerDist = parseFloat(distInput.value)||0;
-      rebuildItems(); renderItemsList_soft(); saveStateDebounced();
-    }
-    function syncDistFromRange(){ distInput.value=distRange.value; if(distLab) distLab.textContent=distRange.value; applyCorner(); }
-    function syncDistFromNumber(){ distRange.value=distInput.value; if(distLab) distLab.textContent=distInput.value; applyCorner(); }
-
-    if(cornerASel) cornerASel.addEventListener('change', applyCorner);
-    if(cornerBSel) cornerBSel.addEventListener('change', applyCorner);
-    if(distInput) distInput.addEventListener('change', syncDistFromNumber);
-    if(distRange) distRange.addEventListener('input', syncDistFromRange);
-
     body.querySelectorAll('[data-rot]').forEach(function(btn){
       btn.addEventListener('click', function(){
         it.rot = parseInt(btn.getAttribute('data-rot'));
+        containItemInRoom(it);
         rebuildItems(); renderItemsList(); saveStateDebounced();
       });
     });
@@ -1401,6 +1397,7 @@
           rot:0, color:p.color
         };
         state.items.push(newItem);
+        containItemInRoom(newItem);
         selectedId=newItem.id; openId=newItem.id;
         menu.style.display='none';
         rebuildItems(); renderItemsList(); saveStateDebounced();
