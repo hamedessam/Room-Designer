@@ -226,7 +226,9 @@
   var PRESETS = [
     {type:'bed', name:'سرير', w:190, d:140, h:50, color:'#8C7355'},
     {type:'desk', name:'مكتب', w:120, d:60, h:75, color:'#A98E6E'},
+    {type:'industrial_desk', name:'مكتب مودرن (بلابتوب)', w:120, d:60, h:75, color:'#B08968'},
     {type:'wardrobe', name:'دولاب', w:120, d:60, h:200, color:'#8A7057'},
+    {type:'nightstand', name:'كومودينو أنتيك', w:45, d:40, h:75, color:'#5B3A29'},
     {type:'chair', name:'كرسي', w:45, d:45, h:90, color:'#4C4640'},
     {type:'sofa', name:'كنبة', w:180, d:80, h:85, color:'#7A5C4C'},
     {type:'table', name:'ترابيزة', w:100, d:60, h:75, color:'#B79A78'},
@@ -921,6 +923,85 @@
         var leg = bmesh(legSize,legH,legSize,darker,0.5,0.15);
         leg.position.set(s[0]*(w/2-legSize/2-inset*0.2), legH/2, s[1]*(d/2-legSize/2-inset*0.2));
         g.add(leg);
+      });
+    }
+    else if(it.type === 'industrial_desk'){
+      var topTh2 = Math.max(0.03, h*0.06);
+      var top2 = bmesh(w,topTh2,d,base,0.55); top2.position.set(0,h-topTh2/2,0); g.add(top2);
+      var metalColor = '#1E1E1E';
+      var legSize2 = Math.min(0.04, Math.min(w,d)*0.06);
+      var legH2 = h-topTh2;
+      var legPositions = [[-1,-1],[1,-1],[-1,1],[1,1]];
+      legPositions.forEach(function(s){
+        var leg = bmesh(legSize2, legH2, legSize2, metalColor, 0.4, 0.5);
+        leg.position.set(s[0]*(w/2-legSize2/2), legH2/2, s[1]*(d/2-legSize2/2));
+        g.add(leg);
+      });
+      var barH = legH2*0.42;
+      [-1,1].forEach(function(s){
+        var sideBar = bmesh(legSize2*0.8, legSize2*0.8, d-legSize2, metalColor, 0.4, 0.5);
+        sideBar.position.set(s*(w/2-legSize2/2), barH, 0);
+        g.add(sideBar);
+      });
+      var crossBar = bmesh(w-legSize2*2, legSize2*0.8, legSize2*0.8, metalColor, 0.4, 0.5);
+      crossBar.position.set(0, barH, 0);
+      g.add(crossBar);
+      var drawerH = h*0.16, drawerY = h - topTh2 - drawerH*0.55;
+      [-1,1].forEach(function(s){
+        var dr = bmesh(w*0.42, drawerH, 0.03, shade(color,-0.12), 0.5);
+        dr.position.set(s*w*0.23, drawerY, d/2-0.015);
+        g.add(dr);
+        var pull = bmesh(w*0.14, drawerH*0.14, 0.015, '#EDEAE2', 0.4);
+        pull.position.set(s*w*0.23, drawerY, d/2+0.005);
+        g.add(pull);
+      });
+      var lapW=0.34, lapD=0.24, lapBaseH=0.018, lapScreenH=0.22, lapColor='#26262A';
+      var lapGroup = new THREE.Group();
+      var lapBase = bmesh(lapW, lapBaseH, lapD, lapColor, 0.35, 0.2);
+      lapBase.position.set(0, lapBaseH/2, 0);
+      lapGroup.add(lapBase);
+      var screenPivot = new THREE.Group();
+      screenPivot.position.set(0, lapBaseH, -lapD/2);
+      screenPivot.rotation.x = -100*Math.PI/180;
+      var lapScreen = bmesh(lapW*0.96, lapScreenH, 0.012, lapColor, 0.3, 0.2);
+      lapScreen.position.set(0, lapScreenH/2, 0);
+      screenPivot.add(lapScreen);
+      lapGroup.add(screenPivot);
+      lapGroup.position.set(-w*0.12, h, d*0.08);
+      g.add(lapGroup);
+    }
+    else if(it.type === 'nightstand'){
+      var plinthH = h*0.06;
+      var plinth2 = bmesh(w*1.04, plinthH, d*1.04, darker, 0.85);
+      plinth2.position.set(0, plinthH/2, 0); g.add(plinth2);
+      var bodyH = h*0.72;
+      var body2 = bmesh(w, bodyH, d, base, 0.55);
+      body2.position.set(0, plinthH+bodyH/2, 0); g.add(body2);
+      var topH = h*0.06;
+      var top3 = bmesh(w*1.1, topH, d*1.1, darker, 0.45);
+      top3.position.set(0, plinthH+bodyH+topH/2, 0); g.add(top3);
+      var drawerFrontH = bodyH*0.24;
+      var drawerFront = bmesh(w*0.82, drawerFrontH, 0.02, light, 0.5);
+      drawerFront.position.set(0, plinthH+bodyH-drawerFrontH*0.6, d/2+0.011);
+      g.add(drawerFront);
+      [-1,1].forEach(function(s){
+        var pull2 = new THREE.Mesh(new THREE.SphereGeometry(0.009,10,10), new THREE.MeshStandardMaterial({color:'#C9A961', roughness:0.3, metalness:0.6}));
+        pull2.position.set(s*w*0.28, plinthH+bodyH-drawerFrontH*0.6, d/2+0.025);
+        g.add(pull2);
+      });
+      var doorH = bodyH*0.72;
+      var doorFront = bmesh(w*0.82, doorH, 0.02, base, 0.5);
+      doorFront.position.set(0, plinthH+doorH/2, d/2+0.011);
+      g.add(doorFront);
+      var keyhole = new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.01,10), new THREE.MeshStandardMaterial({color:'#1A1613', roughness:0.4}));
+      keyhole.rotation.x = Math.PI/2;
+      keyhole.position.set(-w*0.28, plinthH+doorH*0.55, d/2+0.026);
+      g.add(keyhole);
+      var pilasterW = Math.min(0.035, w*0.07);
+      [-1,1].forEach(function(s){
+        var pilaster = bmesh(pilasterW, bodyH*0.98, pilasterW*1.4, darker, 0.5);
+        pilaster.position.set(s*(w/2-pilasterW/2), plinthH+bodyH/2, d/2-pilasterW*0.55);
+        g.add(pilaster);
       });
     }
     else if(it.type === 'wardrobe'){
