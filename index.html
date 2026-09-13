@@ -520,11 +520,25 @@
     renderer = new THREE.WebGLRenderer({antialias:true});
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(holder.clientWidth, holder.clientHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    if(THREE.sRGBEncoding !== undefined) renderer.outputEncoding = THREE.sRGBEncoding;
+    if(THREE.ACESFilmicToneMapping !== undefined) renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
     holder.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-    var dir = new THREE.DirectionalLight(0xfff3e2, 0.75); dir.position.set(4,8,3); scene.add(dir);
-    var dir2 = new THREE.DirectionalLight(0xdfe8ff, 0.3); dir2.position.set(-5,4,-4); scene.add(dir2);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    var dir = new THREE.DirectionalLight(0xfff3e2, 0.9);
+    dir.position.set(5,9,4);
+    dir.castShadow = true;
+    dir.shadow.mapSize.width = 2048;
+    dir.shadow.mapSize.height = 2048;
+    dir.shadow.camera.left = -9; dir.shadow.camera.right = 9;
+    dir.shadow.camera.top = 9; dir.shadow.camera.bottom = -9;
+    dir.shadow.camera.near = 0.5; dir.shadow.camera.far = 30;
+    dir.shadow.bias = -0.0015;
+    scene.add(dir);
+    var dir2 = new THREE.DirectionalLight(0xdfe8ff, 0.25); dir2.position.set(-5,4,-4); scene.add(dir2);
 
     roomGroup = new THREE.Group();
     itemsGroup = new THREE.Group();
@@ -752,7 +766,9 @@
     var floorGeo = new THREE.ShapeGeometry(shape);
     floorGeo.rotateX(-Math.PI/2);
     var floorMat = new THREE.MeshStandardMaterial({map:makeFloorTexture(state.room.floorColor, state.room.tile), roughness:0.85, side:THREE.DoubleSide});
-    roomGroup.add(new THREE.Mesh(floorGeo, floorMat));
+    var floorMesh = new THREE.Mesh(floorGeo, floorMat);
+    floorMesh.receiveShadow = true;
+    roomGroup.add(floorMesh);
 
     var wallMatHi = new THREE.MeshStandardMaterial({color:0xA8562E, roughness:0.85, side:THREE.DoubleSide, transparent:true, opacity:0.65});
     var doorLeafMat = new THREE.MeshStandardMaterial({color:0x6B4A34, roughness:0.55});
@@ -795,6 +811,8 @@
         var c = toWorld((u0+u1)/2, (v0+v1)/2);
         var geo = new THREE.PlaneGeometry(u1-u0, v1-v0);
         var mesh = new THREE.Mesh(geo, i===selectedWallIndex ? wallMatHi : wallMatEdge);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
         mesh.rotation.y = angle;
         mesh.position.set(c.x, c.y, c.z);
         mesh.userData = {isWall:true, edgeIndex:i, p1x:p1x,p1z:p1z,p2x:p2x,p2z:p2z};
@@ -819,9 +837,11 @@
           var dw = eu-su;
           var leaf = new THREE.Mesh(new THREE.BoxGeometry(dw*0.95, op.topV*0.97, 0.045), doorLeafMat);
           leaf.position.set(dw*0.95/2, op.topV*0.97/2, 0);
+          leaf.castShadow = true; leaf.receiveShadow = true;
           pivot.add(leaf);
           var handle = new THREE.Mesh(new THREE.SphereGeometry(0.018,10,10), handleMat);
           handle.position.set(dw*0.95*0.88, op.topV*0.5, 0.035);
+          handle.castShadow = true;
           pivot.add(handle);
           roomGroup.add(pivot);
         } else {
@@ -830,6 +850,7 @@
           var glass = new THREE.Mesh(new THREE.PlaneGeometry(gw*0.92, gh*0.86), glassMat);
           glass.rotation.y = angle;
           glass.position.set(c2.x, c2.y, c2.z);
+          glass.receiveShadow = true;
           roomGroup.add(glass);
           var frame = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(gw*0.98, gh*0.94)), frameLineMat);
           frame.rotation.y = angle;
@@ -961,6 +982,9 @@
       var edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({color:0x2B2723, transparent:true, opacity:0.3}));
       box.add(edges);
     }
+    g.traverse(function(obj){
+      if(obj.isMesh){ obj.castShadow = true; obj.receiveShadow = true; }
+    });
     return g;
   }
 
@@ -1079,8 +1103,14 @@
             colorInp.addEventListener('input', function(){
               if(!state.room.wallColorOverrides) state.room.wallColorOverrides = {};
               state.room.wallColorOverrides[i] = colorInp.value;
-              rebuildRoom(); renderWallsList(); saveStateDebounced();
+              rebuildRoom();
+              var swatch = head.querySelector('.item-swatch');
+              if(swatch) swatch.style.background = colorInp.value;
+              var hexLab = body.querySelector('.hex-label');
+              if(hexLab) hexLab.textContent = 'لون خاص بالحيطة دي';
+              saveStateDebounced();
             });
+            colorInp.addEventListener('change', function(){ renderWallsList(); });
           }
           var resetColorBtn = body.querySelector('[data-wallcolor-reset]');
           if(resetColorBtn){
