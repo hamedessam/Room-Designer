@@ -1194,6 +1194,36 @@
     state.items.forEach(function(it){ containItemInRoom(it); });
   }
 
+  function snapItemToNearestWall(it){
+    var pts = state.room.points, n = pts.length;
+    var cx = it.x + it.w/2, cz = it.z + it.d/2;
+    var bestEdge = -1, bestDist = Infinity;
+    for(var i=0;i<n;i++){
+      var p1=pts[i], p2=pts[(i+1)%n];
+      var dx=p2.x-p1.x, dz=p2.z-p1.z;
+      var lenSq = dx*dx+dz*dz;
+      var t = lenSq>0 ? ((cx-p1.x)*dx+(cz-p1.z)*dz)/lenSq : 0;
+      t = Math.max(0, Math.min(1, t));
+      var qx=p1.x+t*dx, qz=p1.z+t*dz;
+      var dd = Math.sqrt((cx-qx)*(cx-qx)+(cz-qz)*(cz-qz));
+      if(dd < bestDist){ bestDist=dd; bestEdge=i; }
+    }
+    if(bestEdge < 0) return;
+    var frame = getWallFrame(bestEdge);
+    var corners = boxCornersWorldCm(it);
+    var minProj = Infinity;
+    corners.forEach(function(c){
+      var rx=c.x-frame.p1.x, rz=c.z-frame.p1.z;
+      var proj = rx*frame.nIn.x + rz*frame.nIn.z;
+      if(proj < minProj) minProj = proj;
+    });
+    var desiredMin = 2;
+    var delta = desiredMin - minProj;
+    it.x = Math.round(it.x + frame.nIn.x*delta);
+    it.z = Math.round(it.z + frame.nIn.z*delta);
+    containItemInRoom(it);
+  }
+
   // ---------- UI ----------
   function el(id){ return document.getElementById(id); }
   function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
@@ -1505,6 +1535,7 @@
         '<div class="field"><label>الارتفاع سم</label><input type="number" data-f="h" value="'+it.h+'" min="5" max="400"></div>'+
       '</div>'+
       '<div class="field"><label>لون القطعة</label><div class="color-row"><input type="color" data-f="color" value="'+it.color+'"><span class="hex-label">'+it.color+'</span></div></div>'+
+      '<button type="button" class="btn-secondary" data-snap-wall style="border-color:var(--accent); color:var(--accent);">🧲 لزّقها بأقرب حيطة</button>'+
       '<div class="field"><label>الموضع الأفقي (X) — <span data-lab="x">'+it.x+'</span> سم</label><input type="range" data-f="x" min="'+b.minX+'" max="'+maxX+'" value="'+clamp(it.x,b.minX,maxX)+'"></div>'+
       '<div class="field"><label>الموضع للعمق (Z) — <span data-lab="z">'+it.z+'</span> سم</label><input type="range" data-f="z" min="'+b.minZ+'" max="'+maxZ+'" value="'+clamp(it.z,b.minZ,maxZ)+'"></div>'+
       '<p class="section-note" style="margin-top:-4px;">اسحب وشوف القطعة بتتحرك لايف في العرض — البرنامج مش هيسيبها تطلع بره الحيطة أبدًا حتى لو السلايدر وصل الآخر.</p>'+
@@ -1537,6 +1568,22 @@
         rebuildItems(); renderItemsList_soft(); saveStateDebounced();
       });
     });
+
+    var snapBtn = body.querySelector('[data-snap-wall]');
+    if(snapBtn){
+      snapBtn.addEventListener('click', function(){
+        snapItemToNearestWall(it);
+        var xInput = body.querySelector('[data-f="x"]'), zInput = body.querySelector('[data-f="z"]');
+        var xLab = body.querySelector('[data-lab="x"]'), zLab = body.querySelector('[data-lab="z"]');
+        var b2 = roomBounds();
+        var maxX2 = Math.round(b2.maxX - it.w), maxZ2 = Math.round(b2.maxZ - it.d);
+        if(xInput){ xInput.min=b2.minX; xInput.max=maxX2; xInput.value=clamp(it.x,b2.minX,maxX2); }
+        if(zInput){ zInput.min=b2.minZ; zInput.max=maxZ2; zInput.value=clamp(it.z,b2.minZ,maxZ2); }
+        if(xLab) xLab.textContent = it.x;
+        if(zLab) zLab.textContent = it.z;
+        rebuildItems(); renderItemsList_soft(); saveStateDebounced();
+      });
+    }
 
     body.querySelectorAll('[data-rot]').forEach(function(btn){
       btn.addEventListener('click', function(){
